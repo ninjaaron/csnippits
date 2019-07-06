@@ -4,9 +4,9 @@
 
 #define VECTOR(type, name, prefix)					\
 	typedef struct _ ## name {					\
-		type *arr;						\
 		size_t len;						\
 		size_t max;						\
+		type *arr;						\
 	} name;								\
 									\
 	name *prefix ## _new(void)					\
