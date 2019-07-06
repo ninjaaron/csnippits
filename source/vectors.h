@@ -2,34 +2,34 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
-#define VECTOR(type, name, prefix)					\
-	typedef struct _ ## name {					\
+#define VECTOR(TYPE, NAME, PREFIX)					\
+	typedef struct _ ## NAME {					\
 		size_t len;						\
 		size_t max;						\
-		type *arr;						\
-	} name;								\
+		TYPE *arr;						\
+	} NAME;								\
 									\
-	name *prefix ## _new(void)					\
+	NAME *PREFIX ## _new(void)					\
 	{								\
-		name *new = malloc(sizeof(name));			\
-		new->arr = malloc(sizeof(type) * 2);			\
+		NAME *new = malloc(sizeof(NAME));			\
+		new->arr = malloc(sizeof(TYPE) * 2);			\
 		new->len = 0;						\
 		new->max = 2;						\
 		return new;						\
 	}								\
 									\
-	bool prefix ## _grow(name *vector)				\
+	bool PREFIX ## _grow(NAME *vector)				\
 	{								\
 		vector->max *= 2;					\
-		type *tmp;						\
-		tmp = realloc(vector->arr, sizeof(type) * vector->max);	\
+		TYPE *tmp;						\
+		tmp = realloc(vector->arr, sizeof(TYPE) * vector->max);	\
 		if (tmp == NULL)					\
 			return true;					\
 		vector->arr = tmp;					\
 		return false;						\
 	}								\
 									\
-	bool prefix ## _prune(name *vector)				\
+	bool PREFIX ## _prune(NAME *vector)				\
 	{								\
 		size_t max = vector->max;				\
 		while ((max /= 2) >= vector->len)			\
@@ -39,34 +39,34 @@
 			return false;					\
 		}							\
 		vector->max = max;					\
-		type *tmp;						\
-		tmp = realloc(vector->arr, sizeof(type) * vector->max);	\
+		TYPE *tmp;						\
+		tmp = realloc(vector->arr, sizeof(TYPE) * vector->max);	\
 		if (tmp == NULL)					\
 			return true;					\
 		vector->arr = tmp;					\
 		return false;						\
 	}								\
 									\
-	bool prefix ## _append(name *vector, type val)			\
+	bool PREFIX ## _append(NAME *vector, TYPE val)			\
 	{								\
 		bool err = false;					\
 		if (vector->len == vector->max) {			\
-			err = prefix ## _grow(vector);			\
+			err = PREFIX ## _grow(vector);			\
 		}							\
 		vector->arr[vector->len++] = val;			\
 		return err;						\
 	}								\
 									\
-	bool prefix ## _extend(name *target, name *source)		\
+	bool PREFIX ## _extend(NAME *target, NAME *source)		\
 	{								\
-		type *tmp;						\
-		type *sarr = source->arr;				\
+		TYPE *tmp;						\
+		TYPE *sarr = source->arr;				\
 		size_t len = target->len + source->len;			\
 		size_t slen = source->len;				\
 		while (target->max < len) {				\
 			target->max *= 2;				\
 		}							\
-		tmp = realloc(target->arr, sizeof(type) * target->max);	\
+		tmp = realloc(target->arr, sizeof(TYPE) * target->max);	\
 		if (tmp == NULL)					\
 			return true;					\
 		target->arr = tmp;					\
@@ -77,31 +77,31 @@
 		return false;						\
 	}								\
 									\
-	type prefix ## _pop(name *vector)				\
+	TYPE PREFIX ## _pop(NAME *vector)				\
 	{								\
 		if (vector->len == 0) {					\
-			fputs(#prefix "_pop called on empty vector",	\
+			fputs(#PREFIX "_pop called on empty vector",	\
 			      stderr);					\
 		}							\
 		return vector->arr[--vector->len];			\
 	}								\
 									\
-	type prefix ## _del(name *vector, size_t idx)			\
+	TYPE PREFIX ## _del(NAME *vector, size_t idx)			\
 	{								\
 		--vector->len;						\
-		type val = vector->arr[idx];				\
-		type *end = vector->arr + vector->len - 1;		\
-		type *cur = vector->arr + idx;				\
+		TYPE val = vector->arr[idx];				\
+		TYPE *end = vector->arr + vector->len - 1;		\
+		TYPE *cur = vector->arr + idx;				\
 		do {							\
 			*cur = cur[1];					\
 		} while (++cur < end);					\
 		return val;						\
 	}								\
 									\
-	type prefix ## _get(name *vector, size_t idx)			\
+	TYPE PREFIX ## _get(NAME *vector, size_t idx)			\
 	{								\
 		if (idx >= vector->len) {				\
-			fputs(#prefix "_get: no such index.\n",		\
+			fputs(#PREFIX "_get: no such index.\n",		\
 			      stderr);					\
 		} else if (idx < 0) {					\
 			idx = vector->len + idx;			\
@@ -109,7 +109,7 @@
 		return vector->arr[idx];				\
 	}								\
 									\
-	size_t prefix ## _next(name *vector, size_t idx, type *ptr)	\
+	size_t PREFIX ## _next(NAME *vector, size_t idx, TYPE *ptr)	\
 	{								\
 		if (idx >= vector->len) {				\
 			return 0;					\
@@ -118,10 +118,10 @@
 		return ++idx;						\
 	}								\
 									\
-	void prefix ## _clear(name *vector)				\
+	void PREFIX ## _clear(NAME *vector)				\
 	{								\
 		free(vector->arr);					\
-		vector->arr = malloc(sizeof(type) * 2);			\
+		vector->arr = malloc(sizeof(TYPE) * 2);			\
 		vector->len = 0;					\
 		vector->max = 2;					\
 	}								\
