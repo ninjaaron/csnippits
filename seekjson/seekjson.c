@@ -1,15 +1,13 @@
-#include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <ctype.h>
+#include <string.h>
+#include <stdio.h>
 
-void memoryerror(void)
-{
-	fputs("could not allocate memory\n", stderr);
-	exit(1);
-}
+#include "bufferedreader.h"
+#include "memoryerror.h"
 
-typedef struct {
+typedef struct String_s {
 	size_t len;
 	char *a;
 } String;
@@ -24,6 +22,45 @@ bool strings_are_equal(const String a, const String b)
 		if (*(pa++) != *(pb++))
 			return false;
 	return true;
+}
+
+String *new_string(char *ptr, size_t length)
+{
+	String *s = malloc(sizeof(String));
+	if (s == NULL)
+		memoryerror();
+	s->len = length;
+	s->a = malloc(length);
+	if (s->a == NULL)
+		memoryerror();
+	memcpy(s->a, ptr, length);
+	return s;
+}
+
+char *stringtocstring(char *dest, String *s)
+{
+	memcpy(dest, s->a, s->len);
+	dest[s->len] = '\0';
+	return dest;
+}
+
+void free_string(String *s)
+{
+	if (s == NULL)
+		return;
+	free(s->a);
+	free(s);
+}
+
+void update_string(String *s, const char *ptr, const size_t length)
+{
+	if (s->len < length) {
+		s->a = realloc(s->a, length);
+		if (s->a == NULL)
+			memoryerror();
+	}
+	s->len = length;
+	memcpy(s->a, ptr, length);
 }
 
 typedef struct {
@@ -50,6 +87,8 @@ KeyStack *ks_new(const size_t buffsize)
 
 void ks_free(KeyStack *stack)
 {
+	for (size_t i = 0; i < stack->len; ++i)
+		free_string(stack->a[i].key);
 	free(stack->a);
 	free(stack);
 }
@@ -71,8 +110,16 @@ void ks_push(KeyStack *stack, const Key key)
 	stack->a[stack->len++] = key;
 }
 
+Key *ks_get_top(const KeyStack *stack)
+{
+	return stack->a + (stack->len-1);
+}
+
 Key ks_pop(KeyStack *stack)
 {
+	Key *k = ks_get_top(stack);
+	// problem could be here.
+	free_string(k->key);
 	return stack->a[--(stack->len)];
 }
 
@@ -81,49 +128,26 @@ void ks_replace(const KeyStack *stack, const Key key)
 	stack->a[stack->len-1] = key;
 }
 
-Key ks_get_top(const KeyStack *stack)
-{
-	return stack->a[stack->len-1];
-}
-
 typedef struct {
-	FILE *stream;
+	BufferedReader *stream;
 	KeyStack *stack;
-	char *buff;
-	size_t buffsize;
 } Scanner;
 
 Scanner *new_scanner(FILE *stream, size_t buffsize)
 {
 	Scanner *new = malloc(sizeof(Scanner));
-	new->stream = stream;
+	if (new == NULL)
+		memoryerror();
+	new->stream = br_new(stream, buffsize);
 	new->stack = ks_new(16);
-	new->buff = malloc(sizeof(char) * buffsize);
-	new->buffsize = buffsize;
+	return new;
 }
 
 void free_scanner(Scanner *scanner)
 {
-	free(scanner->buff);
+	br_close(scanner->stream);
 	ks_free(scanner->stack);
 	free(scanner);
-}
-
-size_t grow_buffer(Scanner *scanner)
-{
-	size_t new_size = scanner->buffsize * 2;
-	char *buff = realloc(scanner->buff, sizeof(char) * new_size);
-	if (buff == NULL)
-		memoryerror();
-	scanner->buffsize = new_size;
-	scanner->buff = buff;
-	return new_size;
-}
-
-void add_char_to_buffer(Scanner *scanner, size_t idx, char c) {
-	if (idx == scanner->buffsize)
-		grow_buffer(scanner);
-	scanner->buff[idx] = c;
 }
 
 typedef enum {
@@ -131,6 +155,7 @@ typedef enum {
 	 json_array,
 	 json_string,
 	 json_number,
+	 json_null,
 	 json_malformed,
 	 json_eof
 } JsonType;
@@ -148,6 +173,8 @@ JsonType get_type(const int c)
 		return json_array;
 	case '{':
 		return json_object;
+	case 'n':
+		return json_null;
 	case EOF:
 		return json_eof;
 	default:
@@ -155,41 +182,29 @@ JsonType get_type(const int c)
 	}
 }
 
-bool in_object(const Scanner *scanner)
+size_t add_jstring_to_buffer(BufferedReader *stream, const size_t keep)
 {
-	Key top = ks_get_top(scanner->stack);
-	if (top.key == NULL)
-		return false;
-	return true;
-}
-
-size_t add_string_to_buffer(Scanner *scanner, size_t start)
-{
-	scanner->buff[start] = '"';
-	size_t len;
+	size_t len = keep;
 	int c;
-	for (len = start+1 ;(c = fgetc(scanner->stream)) != '"'; ++len) {
+	for (len += 1 ;(c = br_getc(stream, len)) != '"'; ++len) {
 		if (c == EOF)
 			return 0;
-		add_char_to_buffer(scanner, len, c);
 		if (c == '\\')
-			add_char_to_buffer(scanner, ++len, fgetc(scanner->stream));
+			br_getc(stream, ++len);
 	}
-	add_char_to_buffer(scanner, len++, c);
-	return len;
+	return ++len;
 }
 
-String copy_string(Scanner *scanner)
+void copy_jstring(String *s, BufferedReader *stream)
 {
-	size_t len = add_string_to_buffer(scanner, 0);
-	String out = {len, scanner->buff};
-	return out;
+	size_t len = add_jstring_to_buffer(stream, 0);
+	update_string(s, br_strptr(stream, len), len);
 }
 
-int eatwhitespace(FILE *stream)
+int eatwhitespace(BufferedReader *stream)
 {
 	int c;
-	while (isspace(c = fgetc(stream)));
+	while (isspace(c = br_getc(stream, 0)));
 	return c;
 }
 
@@ -202,31 +217,31 @@ JsonType check_eof(KeyStack *stack)
 
 JsonType set_next_key(Scanner *scanner, int c)
 {
-	Key key = {NULL, 0};
-	if (c == 0)
-		c = eatwhitespace(scanner->stream);
-	if (in_object(scanner)) {
+	Key *key = ks_get_top(scanner->stack);
+	if (key->key != NULL) {
+		// in object
 		switch(c) {
 		case ',':
-			*key.key = copy_string(scanner);
-			break;
+			c = eatwhitespace(scanner->stream);
+			copy_jstring(key->key, scanner->stream);
+			c = eatwhitespace(scanner->stream);
+			if (c != ':')
+				return json_malformed;
+			return json_object;
 		case '}':
 			ks_pop(scanner->stack);
-			return set_next_key(scanner, 0);
+			return json_object;
 		case EOF:
 			return check_eof(scanner->stack);
 		default:
 			return json_malformed;
 		}
-		c = eatwhitespace(scanner->stream);
-		if (c != ':') {
-			return json_malformed;
-		}
 	} else {
+		//in array
 		switch(c) {
 		case ',':
-			key.idx = ks_get_top(scanner->stack).idx + 1;
-			break;
+			key->idx += 1;
+			return json_array;
 		case ']':
 			ks_pop(scanner->stack);
 			return set_next_key(scanner, 0);
@@ -236,20 +251,16 @@ JsonType set_next_key(Scanner *scanner, int c)
 			return json_malformed;
 		}
 	}
-	ks_replace(scanner->stack, key);
-	return json_object;
 }
-
-JsonType scan_next(Scanner *scanner);
 
 JsonType scan_string(Scanner *scanner)
 {
 	int c;
-	while ((c = fgetc(scanner->stream)) != '"') {
+	while ((c = br_getc(scanner->stream, 0)) != '"') {
 		if (c == EOF)
 			return json_malformed;
 		if (c == '\\')
-			fgetc(scanner->stream);
+			br_getc(scanner->stream, 0);
 	}
 	return set_next_key(scanner, 0);
 }
@@ -257,24 +268,30 @@ JsonType scan_string(Scanner *scanner)
 JsonType scan_number(Scanner *scanner)
 {
 	int c;
-	while (isdigit(c = fgetc(scanner->stream)));
+	while (isdigit(c = br_getc(scanner->stream, 0)));
 	if (c == '.')
-		while (isdigit(c = fgetc(scanner->stream)));
+		while (isdigit(c = br_getc(scanner->stream, 0)));
 	if (c == 'e' || c == 'E') {
-		c = fgetc(scanner->stream);
+		c = br_getc(scanner->stream, 0);
 		if (c == '+' || '-')
-			c = fgetc(scanner->stream);
-		while (isdigit(c = fgetc(scanner->stream)));
+			c = br_getc(scanner->stream, 0);
+		while (isdigit(c = br_getc(scanner->stream, 0)));
 	}
 	return set_next_key(scanner, c);
 }
 
 JsonType scan_object(Scanner *scanner)
 {
-	String s = {0, ""};
-	Key newkey = {&s, 0};
+	int c = eatwhitespace(scanner->stream);
+	if (c == '}')
+		return set_next_key(scanner, c);
+	if (c != '"')
+		return json_malformed;
+	br_rewind(scanner->stream);
+	String *s = new_string("1234567890123456789012", 32);
+	Key newkey = {s, 0};
 	ks_push(scanner->stack, newkey);
-	return set_next_key(scanner, 0);
+	return set_next_key(scanner, ',');
 }
 
 JsonType scan_array(Scanner *scanner)
@@ -284,11 +301,22 @@ JsonType scan_array(Scanner *scanner)
 	return json_array;
 }
 
+JsonType scan_null(Scanner *scanner)
+{
+	if (br_getc(scanner->stream, 0) != 'u')
+		return json_malformed;
+	for (size_t i = 0; i < 2; ++i)
+		if (br_getc(scanner->stream, 0) != 'l') {
+			return json_malformed;
+		}
+	return set_next_key(scanner, eatwhitespace(scanner->stream));
+}
+		
+
 JsonType scan_next(Scanner *scanner)
 {
 	int c = eatwhitespace(scanner->stream);
-	JsonType jtype = get_type(c);
-	switch (jtype) {
+	switch (get_type(c)) {
 	case json_string:
 		return scan_string(scanner);
 	case json_number:
@@ -297,6 +325,8 @@ JsonType scan_next(Scanner *scanner)
 		return scan_object(scanner);
 	case json_array:
 		return scan_array(scanner);
+	case json_null:
+		return scan_null(scanner);
 	case json_eof:
 		return check_eof(scanner->stack);
 	default:
@@ -304,6 +334,20 @@ JsonType scan_next(Scanner *scanner)
 	}
 }
 
-// just for testing.
-int main(void)
-{
+int main(void) {
+	Scanner *scanner = new_scanner(stdin, 64);
+	JsonType jtype;
+	Key *key;
+	char out[72];
+	while ((jtype = scan_next(scanner)) != json_eof && jtype != json_malformed) {
+		key = ks_get_top(scanner->stack);
+		if (key->key != NULL) {
+			puts(stringtocstring(out, key->key));
+		} else {
+			printf("%ld\n", key->idx);
+		}
+	}
+	if (jtype == json_malformed)
+		puts("malformed");
+}
+
