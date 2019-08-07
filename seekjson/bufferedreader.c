@@ -27,18 +27,17 @@ size_t br_fill(BufferedReader *br, size_t keep)
 		br->end = true;
 	}
 	br->at = keep;
+	/* printf("at: %ld\n", br->at); */
 	return bytesread + keep;
 }
 
 BufferedReader *br_new(FILE *stream, size_t buffsize)
 {
 	BufferedReader *new = malloc(sizeof(BufferedReader));
-	if (new == NULL)
-		memoryerror();
+	if (new == NULL) memoryerror();
 	new->stream = stream;
 	new->buff = malloc(sizeof(char) * buffsize);
-	if (new->buff == NULL)
-		memoryerror();
+	if (new->buff == NULL) memoryerror();
 	new->buffsize = buffsize;
 	new->end = false;
 	br_fill(new, 0);
@@ -48,8 +47,7 @@ BufferedReader *br_new(FILE *stream, size_t buffsize)
 BufferedReader *br_open(char *name, size_t buffsize)
 {
 	FILE *stream = fopen(name, "r");
-	if (stream == NULL)
-		memoryerror();
+	if (stream == NULL) memoryerror();
 	return br_new(stream, buffsize);
 }
 

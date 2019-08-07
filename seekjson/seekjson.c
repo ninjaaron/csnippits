@@ -6,147 +6,91 @@
 
 #include "bufferedreader.h"
 #include "memoryerror.h"
-
-typedef struct String_s {
-	size_t len;
-	char *a;
-} String;
-
-bool strings_are_equal(const String a, const String b)
-{
-	if (a.len != b.len)
-		return false;
-	char *pa = a.a;
-	char *pb = b.a;
-	for (size_t i=0; i < a.len; ++i) 
-		if (*(pa++) != *(pb++))
-			return false;
-	return true;
-}
-
-String *new_string(char *ptr, size_t length)
-{
-	String *s = malloc(sizeof(String));
-	if (s == NULL)
-		memoryerror();
-	s->len = length;
-	s->a = malloc(length);
-	if (s->a == NULL)
-		memoryerror();
-	memcpy(s->a, ptr, length);
-	return s;
-}
-
-char *stringtocstring(char *dest, String *s)
-{
-	memcpy(dest, s->a, s->len);
-	dest[s->len] = '\0';
-	return dest;
-}
-
-void free_string(String *s)
-{
-	if (s == NULL)
-		return;
-	free(s->a);
-	free(s);
-}
-
-void update_string(String *s, const char *ptr, const size_t length)
-{
-	if (s->len < length) {
-		s->a = realloc(s->a, length);
-		if (s->a == NULL)
-			memoryerror();
-	}
-	s->len = length;
-	memcpy(s->a, ptr, length);
-}
-
-typedef struct {
-	String *key;
-	size_t idx;
-} Key;
+#include "strings.h"
 
 typedef struct {
 	size_t max;
 	size_t len;
-	Key *a;
-} KeyStack;
+	ssize_t *idxs;
+} ObjStack;
 
-KeyStack *ks_new(const size_t buffsize)
+ObjStack *os_new(const size_t buffsize)
 {
-	Key *a = malloc(sizeof(Key) * buffsize);
+	ssize_t *a = malloc(sizeof(ssize_t) * buffsize);
 	if (a == NULL) memoryerror();
-	KeyStack *stack = malloc(sizeof(KeyStack));
+	ObjStack *stack = malloc(sizeof(ObjStack));
 	if (stack == NULL) memoryerror();
-	KeyStack tempkey = {buffsize, 0, a};
-	*stack = tempkey;
+	stack->max = buffsize;
+	stack->len = 0;
+	stack->idxs = a;
 	return stack;
 }
 
-void ks_free(KeyStack *stack)
+#define os_last(stack) stack->idxs[(stack->len)-1]
+
+void os_free(ObjStack *stack)
 {
-	for (size_t i = 0; i < stack->len; ++i)
-		free_string(stack->a[i].key);
-	free(stack->a);
+	free(stack->idxs);
 	free(stack);
 }
 
-size_t ks_grow(KeyStack *stack)
+size_t os_grow(ObjStack *stack)
 {
 	size_t max = stack->max * 2;
-	Key *a = realloc(stack->a, sizeof(Key) * max);
+	ssize_t *a = realloc(stack->idxs, sizeof(ssize_t) * max);
 	if (a == NULL) memoryerror();
 	stack->max = max;
-	stack->a = a;
+	stack->idxs = a;
 	return max;
 }
 
-void ks_push(KeyStack *stack, const Key key)
+void os_push(ObjStack *stack, const ssize_t idx)
 {
 	if (stack->len == stack->max)
-		ks_grow(stack);
-	stack->a[stack->len++] = key;
+		os_grow(stack);
+	stack->idxs[stack->len++] = idx;
 }
 
-Key *ks_get_top(const KeyStack *stack)
+bool os_pop(ObjStack *stack)
 {
-	return stack->a + (stack->len-1);
+	return stack->idxs[--(stack->len)];
 }
 
-Key ks_pop(KeyStack *stack)
+void os_replace(const ObjStack *stack, const ssize_t idx)
 {
-	Key *k = ks_get_top(stack);
-	// problem could be here.
-	free_string(k->key);
-	return stack->a[--(stack->len)];
+	os_last(stack) = idx;
 }
 
-void ks_replace(const KeyStack *stack, const Key key)
-{
-	stack->a[stack->len-1] = key;
+bool os_in_object(const ObjStack *stack) {
+	return os_last(stack) == -1 ? true : false;
 }
+
+void os_index_incr(ObjStack *stack)
+{
+	os_last(stack) += 1; 
+}
+
 
 typedef struct {
 	BufferedReader *stream;
-	KeyStack *stack;
+	ObjStack *stack;
+	String *key;
 } Scanner;
 
 Scanner *new_scanner(FILE *stream, size_t buffsize)
 {
 	Scanner *new = malloc(sizeof(Scanner));
-	if (new == NULL)
-		memoryerror();
+	if (new == NULL) memoryerror();
 	new->stream = br_new(stream, buffsize);
-	new->stack = ks_new(16);
+	new->stack = os_new(16);
+	new->key = unsafe_string("0", 1);
 	return new;
 }
 
 void free_scanner(Scanner *scanner)
 {
 	br_close(scanner->stream);
-	ks_free(scanner->stack);
+	os_free(scanner->stack);
 	free(scanner);
 }
 
@@ -182,23 +126,17 @@ JsonType get_type(const int c)
 	}
 }
 
-size_t add_jstring_to_buffer(BufferedReader *stream, const size_t keep)
+size_t add_jstring_to_buffer(BufferedReader *stream, size_t keep)
 {
-	size_t len = keep;
+	size_t len;
 	int c;
-	for (len += 1 ;(c = br_getc(stream, len)) != '"'; ++len) {
+	for (len = 1 ;(c = br_getc(stream, keep+len)) != '"'; ++len) {
 		if (c == EOF)
 			return 0;
 		if (c == '\\')
 			br_getc(stream, ++len);
 	}
 	return ++len;
-}
-
-void copy_jstring(String *s, BufferedReader *stream)
-{
-	size_t len = add_jstring_to_buffer(stream, 0);
-	update_string(s, br_strptr(stream, len), len);
 }
 
 int eatwhitespace(BufferedReader *stream)
@@ -208,7 +146,18 @@ int eatwhitespace(BufferedReader *stream)
 	return c;
 }
 
-JsonType check_eof(KeyStack *stack)
+size_t set_jstring(String *s, BufferedReader *stream)
+{
+	size_t len = add_jstring_to_buffer(stream, 0);
+	size_t keep = len;
+	int c;
+	while (isspace(c = br_getc(stream, keep)))
+		++keep;
+	update_string(s, br_strptr(stream, len+1), len);
+	return c;
+}
+
+JsonType check_eof(ObjStack *stack)
 {
 	if (stack->len == 0)
 		return json_eof;
@@ -217,20 +166,20 @@ JsonType check_eof(KeyStack *stack)
 
 JsonType set_next_key(Scanner *scanner, int c)
 {
-	Key *key = ks_get_top(scanner->stack);
-	if (key->key != NULL) {
-		// in object
+	if (os_in_object(scanner->stack)) {
 		switch(c) {
 		case ',':
 			c = eatwhitespace(scanner->stream);
-			copy_jstring(key->key, scanner->stream);
-			c = eatwhitespace(scanner->stream);
+			if (c != '"')
+				return json_malformed;
+			c = set_jstring(scanner->key, scanner->stream);
 			if (c != ':')
 				return json_malformed;
 			return json_object;
 		case '}':
-			ks_pop(scanner->stack);
-			return json_object;
+			os_pop(scanner->stack);
+			c = eatwhitespace(scanner->stream);
+			return set_next_key(scanner, c);
 		case EOF:
 			return check_eof(scanner->stack);
 		default:
@@ -240,11 +189,12 @@ JsonType set_next_key(Scanner *scanner, int c)
 		//in array
 		switch(c) {
 		case ',':
-			key->idx += 1;
+			os_index_incr(scanner->stack);
 			return json_array;
 		case ']':
-			ks_pop(scanner->stack);
-			return set_next_key(scanner, 0);
+			os_pop(scanner->stack);
+			c = eatwhitespace(scanner->stream);
+			return set_next_key(scanner, c);
 		case EOF:
 			return check_eof(scanner->stack);
 		default:
@@ -262,7 +212,8 @@ JsonType scan_string(Scanner *scanner)
 		if (c == '\\')
 			br_getc(scanner->stream, 0);
 	}
-	return set_next_key(scanner, 0);
+	c = eatwhitespace(scanner->stream);
+	return set_next_key(scanner, c);
 }
 
 JsonType scan_number(Scanner *scanner)
@@ -288,16 +239,13 @@ JsonType scan_object(Scanner *scanner)
 	if (c != '"')
 		return json_malformed;
 	br_rewind(scanner->stream);
-	String *s = new_string("1234567890123456789012", 32);
-	Key newkey = {s, 0};
-	ks_push(scanner->stack, newkey);
+	os_push(scanner->stack, -1);
 	return set_next_key(scanner, ',');
 }
 
 JsonType scan_array(Scanner *scanner)
 {
-	Key newkey = {NULL, 0};
-	ks_push(scanner->stack, newkey);
+	os_push(scanner->stack, 0);
 	return json_array;
 }
 
@@ -334,20 +282,22 @@ JsonType scan_next(Scanner *scanner)
 	}
 }
 
+ssize_t tell_index(Scanner *scanner)
+{
+	return os_last(scanner->stack);
+}
+
 int main(void) {
 	Scanner *scanner = new_scanner(stdin, 64);
 	JsonType jtype;
-	Key *key;
 	char out[72];
 	while ((jtype = scan_next(scanner)) != json_eof && jtype != json_malformed) {
-		key = ks_get_top(scanner->stack);
-		if (key->key != NULL) {
-			puts(stringtocstring(out, key->key));
+		if (os_in_object(scanner->stack)) {
+			puts(stringtocstring(out, scanner->key));
 		} else {
-			printf("%ld\n", key->idx);
+			printf("%ld\n", tell_index(scanner));
 		}
 	}
 	if (jtype == json_malformed)
 		puts("malformed");
 }
-
