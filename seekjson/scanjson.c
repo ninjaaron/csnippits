@@ -155,18 +155,23 @@ int eatthisspace(BufferedReader *stream, int c)
 	return c;
 }
 
+int getc_keep(BufferedReader *stream, String *s)
+{
+	char *ptr = get_string_ptr(s);
+	size_t len = get_string_len(s);
+	bool update = false;
+	int c = br_getc_keep(stream, ptr, len, &update);
+	if (update)
+		update_string(s, br_strptr(stream, len+1), len);
+	return c;
+}
+
 size_t set_jstring(String *s, BufferedReader *stream)
 {
 	size_t len = add_jstring_to_buffer(stream, 0);
-	size_t keep = len;
 	int c;
-	while (isspace(c = br_getc(stream, keep)))
-		++keep;
-	update_string(s, br_strptr(stream, keep+1), len);
-	/* #ifdef DEBUG */
-	/* char out[1024]; */
-	/* debug(stringtocstring(out, s)); */
-	/* #endif */
+	update_string(s, br_strptr(stream, len), len);
+	while (isspace(c = getc_keep(stream, s)));
 	return c;
 }
 
