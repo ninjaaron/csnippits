@@ -3,6 +3,8 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <string.h>
+
+/* #define DEBUG */
 #include "memoryerror.h"
 
 typedef struct BufferedReader_s {
@@ -15,19 +17,27 @@ typedef struct BufferedReader_s {
 
 size_t br_fill(BufferedReader *br, size_t keep)
 {
-	if (keep >= br->buffsize)
+	debug("trying to fill buffer");
+	if (keep >= br->buffsize) {
 		return 0;
+	}
 	size_t to_read = br->buffsize - keep;
 	if (keep)
 	    memmove(br->buff, br->buff + (to_read), keep);
 	char *dest = br->buff + keep;
 	size_t bytesread = fread(dest, sizeof(char), to_read, br->stream);
 	if (bytesread < to_read) {
-		br->buffsize = bytesread;
+		br->buffsize = bytesread+keep;
 		br->end = true;
 	}
 	br->at = keep;
-	/* printf("at: %ld\n", br->at); */
+	#ifdef DEBUG
+	debug("buffer contents");
+	for (size_t i=0; i < br->buffsize; ++i)
+		putchar(br->buff[i]);
+	putchar('\n');
+	debug("end buffer contents");
+	#endif
 	return bytesread + keep;
 }
 
@@ -71,8 +81,9 @@ int br_error(BufferedReader *br)
 int br_getc(BufferedReader *br, size_t keep)
 {
 	if (br->at == br->buffsize) {
-		if (br->end)
+		if (br->end) {
 			return EOF;
+		}
 		if (!br_fill(br, keep))
 			return EOF;
 	}
