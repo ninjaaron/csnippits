@@ -5,6 +5,8 @@ typedef struct String_s String;
 
 String *new_string(char *ptr, size_t length);
 String *unsafe_string(char *ptr, size_t);
+char *get_string_ptr(String *s);
+size_t get_string_len(String *s);
 String *make_string_safe(String *s);
 void free_string(String *s);
 String *cstringtostring(char *cstring);

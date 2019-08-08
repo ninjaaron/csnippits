@@ -31,6 +31,16 @@ String *unsafe_string(char *ptr, size_t length)
 	return s;
 }
 
+char *get_string_ptr(String *s)
+{
+	return s->a;
+}
+
+size_t get_string_len(String *s)
+{
+	return s->len;
+}
+
 String *make_string_safe(String *s)
 {
 	if (s->on_heap)
