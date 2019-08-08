@@ -5,8 +5,10 @@
 #include <stdio.h>
 
 #include "bufferedreader.h"
-#include "memoryerror.h"
 #include "strings.h"
+
+#define DEBUG
+#include "memoryerror.h"
 
 typedef struct {
 	size_t max;
@@ -132,7 +134,7 @@ size_t add_jstring_to_buffer(BufferedReader *stream, size_t keep)
 	int c;
 	for (len = 1 ;(c = br_getc(stream, keep+len)) != '"'; ++len) {
 		if (c == EOF)
-			return 0;
+			return --len;
 		if (c == '\\')
 			br_getc(stream, ++len);
 	}
@@ -146,6 +148,13 @@ int eatwhitespace(BufferedReader *stream)
 	return c;
 }
 
+int eatthisspace(BufferedReader *stream, int c)
+{
+	while (isspace(c))
+		c = br_getc(stream, 0);
+	return c;
+}
+
 size_t set_jstring(String *s, BufferedReader *stream)
 {
 	size_t len = add_jstring_to_buffer(stream, 0);
@@ -153,7 +162,11 @@ size_t set_jstring(String *s, BufferedReader *stream)
 	int c;
 	while (isspace(c = br_getc(stream, keep)))
 		++keep;
-	update_string(s, br_strptr(stream, len+1), len);
+	update_string(s, br_strptr(stream, keep+1), len);
+	/* #ifdef DEBUG */
+	/* char out[1024]; */
+	/* debug(stringtocstring(out, s)); */
+	/* #endif */
 	return c;
 }
 
@@ -228,6 +241,7 @@ JsonType scan_number(Scanner *scanner)
 			c = br_getc(scanner->stream, 0);
 		while (isdigit(c = br_getc(scanner->stream, 0)));
 	}
+	c = eatthisspace(scanner->stream, c);
 	return set_next_key(scanner, c);
 }
 
