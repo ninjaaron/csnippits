@@ -13,7 +13,8 @@ extern "C" {
 	void br_close(BufferedReader *br);
 	int br_eof(BufferedReader *br);
 	int br_error(BufferedReader *br);
-	int br_getc(BufferedReader *br, size_t keep);
+	int br_getc(BufferedReader *br, size_t len);
+	int br_getc_keep(BufferedReader *br, char *keep, size_t len, bool *filled);
 	void br_rewind(BufferedReader *br);
 	char *br_strptr(BufferedReader *br, size_t length);
  

@@ -15,22 +15,22 @@ typedef struct BufferedReader_s {
 	bool end;
 } BufferedReader;
 
-size_t br_fill(BufferedReader *br, size_t keep)
+size_t br_fill(BufferedReader *br, char *keep, size_t len)
 {
 	debug("trying to fill buffer");
-	if (keep >= br->buffsize) {
+	if (len >= br->buffsize) {
 		return 0;
 	}
-	size_t to_read = br->buffsize - keep;
-	if (keep)
-	    memmove(br->buff, br->buff + (to_read), keep);
-	char *dest = br->buff + keep;
+	size_t to_read = br->buffsize - len;
+	if (len)
+	    memmove(br->buff, keep, len);
+	char *dest = br->buff + len;
 	size_t bytesread = fread(dest, sizeof(char), to_read, br->stream);
 	if (bytesread < to_read) {
-		br->buffsize = bytesread+keep;
+		br->buffsize = bytesread + len;
 		br->end = true;
 	}
-	br->at = keep;
+	br->at = len;
 	#ifdef DEBUG
 	debug("buffer contents");
 	for (size_t i=0; i < br->buffsize; ++i)
@@ -38,7 +38,7 @@ size_t br_fill(BufferedReader *br, size_t keep)
 	putchar('\n');
 	debug("end buffer contents");
 	#endif
-	return bytesread + keep;
+	return bytesread + len;
 }
 
 BufferedReader *br_new(FILE *stream, size_t buffsize)
@@ -50,7 +50,7 @@ BufferedReader *br_new(FILE *stream, size_t buffsize)
 	if (new->buff == NULL) memoryerror();
 	new->buffsize = buffsize;
 	new->end = false;
-	br_fill(new, 0);
+	br_fill(new, NULL, 0);
 	return new;
 }
 
@@ -78,16 +78,27 @@ int br_error(BufferedReader *br)
 	return ferror(br->stream);
 }
 
-int br_getc(BufferedReader *br, size_t keep)
+int br_getc_keep(BufferedReader *br, char *keep, size_t len, bool *filled)
 {
+	*filled =false;
 	if (br->at == br->buffsize) {
 		if (br->end) {
 			return EOF;
 		}
-		if (!br_fill(br, keep))
+		if (br_fill(br, keep, len)) {
+			*filled = true;
+		} else {
 			return EOF;
+		}
 	}
 	return br->buff[br->at++];
+}
+
+int br_getc(BufferedReader *br, size_t len)
+{
+	bool filled = false;
+	char *keep = len ? br->buff + (br->buffsize - len) : NULL;
+	return br_getc_keep(br, keep, len, &filled);
 }
 
 int br_rewind(BufferedReader *br)
