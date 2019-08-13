@@ -21,6 +21,12 @@ NAME *PREFIX_new(void)
 	return new;
 }
 
+void PREFIX_free(NAME *vector)
+{
+	free(vector->arr);
+	free(vector);
+}
+
 bool PREFIX_grow(NAME *vector)
 {
 	vector->max *= 2;
@@ -130,6 +136,3 @@ void PREFIX_clear(NAME *vector)
 }
 
 #enddefine
-
-
-#define FREE_VECTOR(vectorptr) free(vectorptr->arr); free(vectorptr)
