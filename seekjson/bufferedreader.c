@@ -15,6 +15,21 @@ typedef struct BufferedReader_s {
 	bool end;
 } BufferedReader;
 
+void _show_buffer(BufferedReader *br)
+{
+	debug("buffer contents");
+	for (size_t i=0; i < br->buffsize; ++i)
+		putchar(br->buff[i]);
+	putchar('\n');
+	debug("end buffer contents");
+}
+#ifdef DEBUG
+#define debug_show_buffer(br) _show_buffer(br)
+#else
+#define debug_show_buffer(br)
+#endif
+
+
 size_t br_fill(BufferedReader *br, char *keep, size_t len)
 {
 	debug("trying to fill buffer");
@@ -31,13 +46,7 @@ size_t br_fill(BufferedReader *br, char *keep, size_t len)
 		br->end = true;
 	}
 	br->at = len;
-	#ifdef DEBUG
-	debug("buffer contents");
-	for (size_t i=0; i < br->buffsize; ++i)
-		putchar(br->buff[i]);
-	putchar('\n');
-	debug("end buffer contents");
-	#endif
+	debug_show_buffer(br)
 	return bytesread + len;
 }
 
@@ -45,11 +54,8 @@ BufferedReader *br_new(FILE *stream, size_t buffsize)
 {
 	BufferedReader *new = malloc(sizeof(BufferedReader));
 	if (new == NULL) memoryerror();
-	new->stream = stream;
-	new->buff = malloc(sizeof(char) * buffsize);
+	*new = (BufferedReader){stream, malloc(buffsize), buffsize, 0, false};
 	if (new->buff == NULL) memoryerror();
-	new->buffsize = buffsize;
-	new->end = false;
 	br_fill(new, NULL, 0);
 	return new;
 }

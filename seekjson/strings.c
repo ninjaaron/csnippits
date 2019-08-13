@@ -13,9 +13,7 @@ String *new_string(char *ptr, size_t length)
 {
 	String *s = malloc(sizeof(String));
 	if (s == NULL) memoryerror();
-	s->len = length;
-	s->a = malloc(length);
-	s->on_heap = true;
+	*s = (String){length, malloc(length), true};
 	if (s->a == NULL) memoryerror();
 	memcpy(s->a, ptr, length);
 	return s;
@@ -25,9 +23,7 @@ String *unsafe_string(char *ptr, size_t length)
 {
 	String *s = malloc(sizeof(String));
 	if (s == NULL) memoryerror();
-	s->len = length;
-	s->a = ptr;
-	s->on_heap = false;
+	*s = (String){length, ptr, false};
 	return s;
 }
 

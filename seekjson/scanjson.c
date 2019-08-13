@@ -10,6 +10,87 @@
 #define DEBUG
 #include "memoryerror.h"
 
+// define some types
+typedef enum {
+	 json_object = '{',
+	 json_array = '[',
+	 json_string = '"',
+	 json_number = '0',
+	 json_null = 'n',
+	 json_malformed = 'x',
+	 json_eof = EOF
+} JsonType;
+
+typedef enum {
+	j_closer,
+} CharClasses;
+
+JsonType get_type(const int c)
+{
+	if (isdigit(c))
+		return json_number;
+	switch(c) {
+	case '-' :
+		return json_number;
+	case 'n':
+		return json_null;
+	case EOF:
+		return json_eof;
+	default:
+		return c;
+	}
+}
+
+
+// BufferedReader functions.
+size_t add_jstring_to_buffer(BufferedReader *stream, size_t keep)
+{
+	size_t len;
+	int c;
+	for (len = 1 ;(c = br_getc(stream, keep+len)) != '"'; ++len) {
+		if (c == EOF)
+			return --len;
+		if (c == '\\')
+			br_getc(stream, ++len);
+	}
+	return ++len;
+}
+
+int eatwhitespace(BufferedReader *stream)
+{
+	int c;
+	while (isspace(c = br_getc(stream, 0)));
+	return c;
+}
+
+int eatifspace(BufferedReader *stream, int c)
+{
+	while (isspace(c))
+		c = br_getc(stream, 0);
+	return c;
+}
+
+int getc_keep(BufferedReader *stream, String *s)
+{
+	char *ptr = get_string_ptr(s);
+	size_t len = get_string_len(s);
+	bool update = false;
+	int c = br_getc_keep(stream, ptr, len, &update);
+	if (update)
+		update_string(s, br_strptr(stream, len+1), len);
+	return c;
+}
+
+size_t set_jstring(String *s, BufferedReader *stream)
+{
+	size_t len = add_jstring_to_buffer(stream, 0);
+	int c;
+	update_string(s, br_strptr(stream, len), len);
+	while (isspace(c = getc_keep(stream, s)));
+	return c;
+}
+
+// ObjStack implementation
 typedef struct {
 	size_t max;
 	size_t len;
@@ -18,13 +99,10 @@ typedef struct {
 
 ObjStack *os_new(const size_t buffsize)
 {
-	ssize_t *a = malloc(sizeof(ssize_t) * buffsize);
-	if (a == NULL) memoryerror();
 	ObjStack *stack = malloc(sizeof(ObjStack));
 	if (stack == NULL) memoryerror();
-	stack->max = buffsize;
-	stack->len = 0;
-	stack->idxs = a;
+	*stack = (ObjStack){buffsize, 0, malloc(sizeof(ssize_t) * buffsize)};
+	if (stack->idxs == NULL) memoryerror();
 	return stack;
 }
 
@@ -72,115 +150,19 @@ void os_index_incr(ObjStack *stack)
 	os_last(stack) += 1; 
 }
 
-
-typedef struct {
-	BufferedReader *stream;
-	ObjStack *stack;
-	String *key;
-} Scanner;
-
-Scanner *new_scanner(FILE *stream, size_t buffsize)
-{
-	Scanner *new = malloc(sizeof(Scanner));
-	if (new == NULL) memoryerror();
-	new->stream = br_new(stream, buffsize);
-	new->stack = os_new(16);
-	new->key = unsafe_string("0", 1);
-	return new;
-}
-
-void free_scanner(Scanner *scanner)
-{
-	br_close(scanner->stream);
-	os_free(scanner->stack);
-	free(scanner);
-}
-
-typedef enum {
-	 json_object,
-	 json_array,
-	 json_string,
-	 json_number,
-	 json_null,
-	 json_malformed,
-	 json_eof
-} JsonType;
-
-JsonType get_type(const int c)
-{
-	if (isdigit(c))
-		return json_number;
-	switch(c) {
-	case '-' :
-		return json_number;
-	case '"':
-		return json_string;
-	case '[':
-		return json_array;
-	case '{':
-		return json_object;
-	case 'n':
-		return json_null;
-	case EOF:
-		return json_eof;
-	default:
-		return json_malformed;
-	}
-}
-
-size_t add_jstring_to_buffer(BufferedReader *stream, size_t keep)
-{
-	size_t len;
-	int c;
-	for (len = 1 ;(c = br_getc(stream, keep+len)) != '"'; ++len) {
-		if (c == EOF)
-			return --len;
-		if (c == '\\')
-			br_getc(stream, ++len);
-	}
-	return ++len;
-}
-
-int eatwhitespace(BufferedReader *stream)
-{
-	int c;
-	while (isspace(c = br_getc(stream, 0)));
-	return c;
-}
-
-int eatthisspace(BufferedReader *stream, int c)
-{
-	while (isspace(c))
-		c = br_getc(stream, 0);
-	return c;
-}
-
-int getc_keep(BufferedReader *stream, String *s)
-{
-	char *ptr = get_string_ptr(s);
-	size_t len = get_string_len(s);
-	bool update = false;
-	int c = br_getc_keep(stream, ptr, len, &update);
-	if (update)
-		update_string(s, br_strptr(stream, len+1), len);
-	return c;
-}
-
-size_t set_jstring(String *s, BufferedReader *stream)
-{
-	size_t len = add_jstring_to_buffer(stream, 0);
-	int c;
-	update_string(s, br_strptr(stream, len), len);
-	while (isspace(c = getc_keep(stream, s)));
-	return c;
-}
-
 JsonType check_eof(ObjStack *stack)
 {
 	if (stack->len == 0)
 		return json_eof;
 	return json_malformed;
 }
+
+// Scanner implementation
+typedef struct {
+	BufferedReader *stream;
+	ObjStack *stack;
+	String *key;
+} Scanner;
 
 JsonType set_next_key(Scanner *scanner, int c)
 {
@@ -237,16 +219,10 @@ JsonType scan_string(Scanner *scanner)
 JsonType scan_number(Scanner *scanner)
 {
 	int c;
-	while (isdigit(c = br_getc(scanner->stream, 0)));
-	if (c == '.')
-		while (isdigit(c = br_getc(scanner->stream, 0)));
-	if (c == 'e' || c == 'E') {
-		c = br_getc(scanner->stream, 0);
-		if (c == '+' || '-')
-			c = br_getc(scanner->stream, 0);
-		while (isdigit(c = br_getc(scanner->stream, 0)));
-	}
-	c = eatthisspace(scanner->stream, c);
+	while (!isspace(c = br_getc(scanner->stream, 0))
+	       && c != ','
+	       );
+	c = eatifspace(scanner->stream, c);
 	return set_next_key(scanner, c);
 }
 
@@ -278,22 +254,25 @@ JsonType scan_null(Scanner *scanner)
 		}
 	return set_next_key(scanner, eatwhitespace(scanner->stream));
 }
-		
+
+ssize_t tell_index(Scanner *scanner)
+{
+	return os_last(scanner->stack);
+}
+
+typedef JsonType (*ScanFunc)(Scanner *);
+ScanFunc scans[256];
 
 JsonType scan_next(Scanner *scanner)
 {
 	int c = eatwhitespace(scanner->stream);
-	switch (get_type(c)) {
-	case json_string:
-		return scan_string(scanner);
+	JsonType (*scan_func)(Scanner *) = scans[c];
+	if (! scan_func ==  0)
+		return scan_func(scanner);
+
+	switch(get_type(c)) {
 	case json_number:
 		return scan_number(scanner);
-	case json_object:
-		return scan_object(scanner);
-	case json_array:
-		return scan_array(scanner);
-	case json_null:
-		return scan_null(scanner);
 	case json_eof:
 		return check_eof(scanner->stack);
 	default:
@@ -301,9 +280,31 @@ JsonType scan_next(Scanner *scanner)
 	}
 }
 
-ssize_t tell_index(Scanner *scanner)
+CharClasses charclasses[256];
+
+void add_to_charclass(CharClasses class, char *chars)
 {
-	return os_last(scanner->stack);
+	size_t length = st
+
+Scanner *new_scanner(FILE *stream, size_t buffsize)
+{
+	scans[json_object] = scan_object;
+	scans[json_array] = scan_array;
+	scans[json_string] = scan_string;
+	scans[json_null] = scan_null;
+
+	Scanner *new = malloc(sizeof(Scanner));
+	if (new == NULL) memoryerror();
+	*new = (Scanner){
+		br_new(stream, buffsize), os_new(16), unsafe_string("0", 1)};
+	return new;
+}
+
+void free_scanner(Scanner *scanner)
+{
+	br_close(scanner->stream);
+	os_free(scanner->stack);
+	free(scanner);
 }
 
 int main(void) {
