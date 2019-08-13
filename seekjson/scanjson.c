@@ -81,13 +81,10 @@ int getc_keep(BufferedReader *stream, String *s)
 	return c;
 }
 
-size_t set_jstring(String *s, BufferedReader *stream)
+void set_jstring(String *s, BufferedReader *stream)
 {
 	size_t len = add_jstring_to_buffer(stream, 0);
-	int c;
 	update_string(s, br_strptr(stream, len), len);
-	while (isspace(c = getc_keep(stream, s)));
-	return c;
 }
 
 // ObjStack implementation
@@ -166,22 +163,26 @@ typedef struct {
 
 JsonType set_next_key(Scanner *scanner, int c)
 {
-	if (os_in_object(scanner->stack)) {
+	String *key = scanner->key;
+	BufferedReader *stream = scanner->stream;
+	ObjStack *stack = scanner->stack;
+	if (os_in_object(stack)) {
 		switch(c) {
 		case ',':
-			c = eatwhitespace(scanner->stream);
+			c = eatwhitespace(stream);
 			if (c != '"')
 				return json_malformed;
-			c = set_jstring(scanner->key, scanner->stream);
+			set_jstring(key, stream);
+			while (isspace(c = getc_keep(stream, key)));
 			if (c != ':')
 				return json_malformed;
 			return json_object;
 		case '}':
-			os_pop(scanner->stack);
-			c = eatwhitespace(scanner->stream);
+			os_pop(stack);
+			c = eatwhitespace(stream);
 			return set_next_key(scanner, c);
 		case EOF:
-			return check_eof(scanner->stack);
+			return check_eof(stack);
 		default:
 			return json_malformed;
 		}
@@ -189,21 +190,21 @@ JsonType set_next_key(Scanner *scanner, int c)
 		//in array
 		switch(c) {
 		case ',':
-			os_index_incr(scanner->stack);
+			os_index_incr(stack);
 			return json_array;
 		case ']':
-			os_pop(scanner->stack);
+			os_pop(stack);
 			c = eatwhitespace(scanner->stream);
 			return set_next_key(scanner, c);
 		case EOF:
-			return check_eof(scanner->stack);
+			return check_eof(stack);
 		default:
 			return json_malformed;
 		}
 	}
 }
 
-JsonType scan_string(Scanner *scanner)
+JsonType pass_string(Scanner *scanner)
 {
 	int c;
 	while ((c = br_getc(scanner->stream, 0)) != '"') {
@@ -216,7 +217,7 @@ JsonType scan_string(Scanner *scanner)
 	return set_next_key(scanner, c);
 }
 
-JsonType scan_number(Scanner *scanner)
+JsonType pass_number(Scanner *scanner)
 {
 	int c;
 	while (!isspace(c = br_getc(scanner->stream, 0))
@@ -226,7 +227,7 @@ JsonType scan_number(Scanner *scanner)
 	return set_next_key(scanner, c);
 }
 
-JsonType scan_object(Scanner *scanner)
+JsonType pass_object(Scanner *scanner)
 {
 	int c = eatwhitespace(scanner->stream);
 	if (c == '}')
@@ -238,13 +239,13 @@ JsonType scan_object(Scanner *scanner)
 	return set_next_key(scanner, ',');
 }
 
-JsonType scan_array(Scanner *scanner)
+JsonType pass_array(Scanner *scanner)
 {
 	os_push(scanner->stack, 0);
 	return json_array;
 }
 
-JsonType scan_null(Scanner *scanner)
+JsonType pass_null(Scanner *scanner)
 {
 	if (br_getc(scanner->stream, 0) != 'u')
 		return json_malformed;
@@ -263,13 +264,12 @@ ssize_t tell_index(Scanner *scanner)
 typedef JsonType (*ScanFunc)(Scanner *);
 ScanFunc scans[256];
 
-JsonType scan_next(Scanner *scanner)
+JsonType pass_next(Scanner *scanner)
 {
 	int c = eatwhitespace(scanner->stream);
 	JsonType (*scan_func)(Scanner *) = scans[c];
 	if (! scan_func ==  0)
 		return scan_func(scanner);
-
 	switch(get_type(c)) {
 	case json_number:
 		return scan_number(scanner);
@@ -282,7 +282,47 @@ JsonType scan_next(Scanner *scanner)
 
 CharClasses charclasses[256];
 
-void add_to_charclass(CharClasses class, char *chars)
+void add_to_charclass(CharClasses class, char *chars);
+
+String *read_next(Scanner *scanner, String *s)
+{
+	ObjStack *stack = scanner->stack;
+	BufferedReader *stream = scanner->stream;
+	size_t stack_base = stack->len;
+	int c = eatwhitespace(stream);
+	size_t len = 1;
+	do {
+		switch (c) {
+		case '"':
+			len += add_jstring_to_buffer(stream, len);
+			break;
+		case '{':
+			os_push(stack, -1);
+			break;
+		case '[':
+			os_push(stack, 0);
+			break;
+		case '}':
+			if (!os_in_object(stack))
+				return NULL;
+			os_pop(stack);
+			break;
+		case ']':
+			if (os_in_object(stack))
+				return NULL;
+			os_pop(stack);
+			break;
+		case json_eof:
+			return NULL;
+		}
+		c = br_getc(stream, len);
+		++len;
+	} while (stack->len > stack_base);
+	br_rewind(stream);
+	return update_string(s, br_strptr(stream, len), len);
+}
+
+ssize_t tell_index(Scanner *scanner)
 {
 	size_t length = st
 
@@ -311,7 +351,7 @@ int main(void) {
 	Scanner *scanner = new_scanner(stdin, 64);
 	JsonType jtype;
 	char out[72];
-	while ((jtype = scan_next(scanner)) != json_eof && jtype != json_malformed) {
+	while ((jtype = pass_next(scanner)) != json_eof && jtype != json_malformed) {
 		if (os_in_object(scanner->stack)) {
 			puts(stringtocstring(out, scanner->key));
 		} else {
