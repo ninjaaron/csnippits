@@ -22,8 +22,22 @@ typedef enum {
 } JsonType;
 
 typedef enum {
-	j_closer,
+	j_none,
+	j_follower,
 } CharClasses;
+
+CharClasses charclasses[256] = {j_follower};
+
+void add_to_charclass(const CharClasses class, const char *chars)
+{
+	size_t length = strlen(chars);
+	char c;
+	for (size_t i=0; i<length; ++i) {
+		c = chars[i];
+		charclasses[(int)c] = class;
+	}
+
+}
 
 JsonType get_type(const int c)
 {
@@ -204,7 +218,7 @@ JsonType set_next_key(Scanner *scanner, int c)
 	}
 }
 
-JsonType pass_string(Scanner *scanner)
+JsonType eat_string(Scanner *scanner)
 {
 	int c;
 	while ((c = br_getc(scanner->stream, 0)) != '"') {
@@ -213,6 +227,15 @@ JsonType pass_string(Scanner *scanner)
 		if (c == '\\')
 			br_getc(scanner->stream, 0);
 	}
+	return json_string;
+}
+
+JsonType pass_string(Scanner *scanner)
+{
+	JsonType t = eat_string(scanner);
+	if (t == json_malformed)
+		return t;
+	int c;
 	c = eatwhitespace(scanner->stream);
 	return set_next_key(scanner, c);
 }
@@ -221,10 +244,44 @@ JsonType pass_number(Scanner *scanner)
 {
 	int c;
 	while (!isspace(c = br_getc(scanner->stream, 0))
-	       && c != ','
+	       && charclasses[c] != j_follower && c != EOF
 	       );
 	c = eatifspace(scanner->stream, c);
 	return set_next_key(scanner, c);
+}
+
+JsonType pass_array(Scanner *scanner);
+JsonType pass_object(Scanner *scanner);
+
+#define INNER_PASS(stopchar)					\
+	char c;							\
+	while ((c = br_getc(scanner->stream, 0)) != stopchar) {	\
+		switch (c) {					\
+		case '"':					\
+			eat_string(scanner);			\
+			break;					\
+		case '{':					\
+			pass_object(scanner);			\
+			break;					\
+		case '[':					\
+			pass_array(scanner);			\
+			break;					\
+		case EOF:					\
+			return json_malformed;			\
+		default:					\
+			break;					\
+		}						\
+	}							\
+	return set_next_key(scanner, ',');
+	
+JsonType new_pass_object(Scanner *scanner)
+{
+	INNER_PASS('}')
+}
+
+JsonType new_pass_array(Scanner *scanner)
+{
+	INNER_PASS(']')
 }
 
 JsonType pass_object(Scanner *scanner)
@@ -261,28 +318,24 @@ ssize_t tell_index(Scanner *scanner)
 	return os_last(scanner->stack);
 }
 
-typedef JsonType (*ScanFunc)(Scanner *);
-ScanFunc scans[256];
+typedef JsonType (*PassFunc)(Scanner *);
+PassFunc passfuncs[256] = {0};
 
 JsonType pass_next(Scanner *scanner)
 {
 	int c = eatwhitespace(scanner->stream);
-	JsonType (*scan_func)(Scanner *) = scans[c];
-	if (! scan_func ==  0)
-		return scan_func(scanner);
+	PassFunc pass_func = passfuncs[c];
+	if (! pass_func ==  0)
+		return pass_func(scanner);
 	switch(get_type(c)) {
 	case json_number:
-		return scan_number(scanner);
+		return pass_number(scanner);
 	case json_eof:
 		return check_eof(scanner->stack);
 	default:
 		return json_malformed;
 	}
 }
-
-CharClasses charclasses[256];
-
-void add_to_charclass(CharClasses class, char *chars);
 
 String *read_next(Scanner *scanner, String *s)
 {
@@ -322,16 +375,17 @@ String *read_next(Scanner *scanner, String *s)
 	return update_string(s, br_strptr(stream, len), len);
 }
 
-ssize_t tell_index(Scanner *scanner)
-{
-	size_t length = st
+/* ssize_t tell_index(Scanner *scanner) */
+/* { */
+/* 	size_t length = st */
 
 Scanner *new_scanner(FILE *stream, size_t buffsize)
 {
-	scans[json_object] = scan_object;
-	scans[json_array] = scan_array;
-	scans[json_string] = scan_string;
-	scans[json_null] = scan_null;
+	passfuncs[json_object] = pass_object;
+	passfuncs[json_array] = pass_array;
+	passfuncs[json_string] = pass_string;
+	passfuncs[json_null] = pass_null;
+	add_to_charclass(j_follower, ",}]");
 
 	Scanner *new = malloc(sizeof(Scanner));
 	if (new == NULL) memoryerror();
