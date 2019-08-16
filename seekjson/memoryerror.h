@@ -1,9 +1,10 @@
 #ifdef DEBUG
 
 #define debug(string) \
-	fprintf(stderr, " \x1b[31mDEBUG\x1b[0m: %s\n", string)
+	fprintf(stderr, " \x1b[31mDEBUG\x1b[0m: " #string "\n")
 #define debugf(fmtstring, ...) \
 	fprintf(stderr, " \x1b[31mDEBUG\x1b[0m:" fmtstring "\n", __VA_ARGS__)
+#define show_value(fmt, expr) fprintf(stderr, #expr " = " fmt "\n", expr)
 
 #else
 
