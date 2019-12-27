@@ -21,6 +21,7 @@ typedef enum {
 	 json_eof = 256
 } JsonType;
 
+// some classes for some characters. may be filled out more later. or not.
 typedef enum {
 	j_none,
 	j_follower,
@@ -32,6 +33,7 @@ CharClasses charclasses[266] = {
 	[']'] = j_follower,
 };
 
+// fallback to get the type of a json object if lookup failed.
 JsonType get_type(const int c)
 {
 	if (isdigit(c))
@@ -46,36 +48,24 @@ JsonType get_type(const int c)
 	}
 }
 
+// some conditions for string processing
+typedef int (CharCondition)(int);
 
-// BufferedReader functions.
-size_t add_jstring_to_buffer(BufferedReader *stream, size_t keep)
+int in_num(int c)
 {
-	size_t len;
-	int c;
-	for (len = 1 ;(c = br_getc(stream, keep+len)) != '"'; ++len) {
-		if (c == EOF)
-			return --len;
-		if (c == '\\')
-			br_getc(stream, ++len);
-	}
-	return ++len;
+	return (c != EOF && !isspace(c) && charclasses[c] != j_follower);
 }
 
-int eatwhitespace(BufferedReader *stream)
-{
-	int c;
-	while (isspace(c = br_getc(stream, 0)));
-	return c;
-}
+/* int in_jstring(int c) */
+/* { */
+/* 	return (c != '"' && c != '\\' && c != EOF); */
+/* } */
 
-int eatifspace(BufferedReader *stream, int c)
-{
-	while (isspace(c))
-		c = br_getc(stream, 0);
-	return c;
-}
+//// BufferedReader functions.
 
-int getc_keep(BufferedReader *stream, String *s)
+// add next character from the buffer to the given string and return
+// character.
+int getc_for_string(BufferedReader *stream, String *s)
 {
 	char *ptr = get_string_ptr(s);
 	size_t len = get_string_len(s);
@@ -86,9 +76,57 @@ int getc_keep(BufferedReader *stream, String *s)
 	return c;
 }
 
-void set_jstring(String *s, BufferedReader *stream)
+int eat_while(CharCondition cond, BufferedReader *stream, int c)
 {
-	size_t len = add_jstring_to_buffer(stream, 0);
+	while (cond(c))
+		c = br_getc(stream, 0);
+	return c;
+}
+
+int keep_while(CharCondition cond, BufferedReader *stream, int c, size_t *len)
+{
+	while (cond(c))
+		c = br_getc(stream, (*len)++);
+	return c;
+}
+
+
+int build_while(CharCondition cond, BufferedReader *stream, int c, String *s)
+{
+	while (cond(c))
+		c = getc_for_string(stream, s);
+	return c;
+}
+
+// similar functions, but for dealing with Json strings;;
+JsonType eat_jstring(BufferedReader *stream)
+{
+	int c;
+	while ((c = br_getc(stream, 0)) != '"') {
+		if (c == EOF)
+			return json_malformed;
+		if (c == '\\')
+			br_getc(stream, 0);
+	}
+	return json_string;
+}
+
+size_t keep_jstring(BufferedReader *stream, size_t keep)
+{
+	size_t len = 1;
+	int c;
+	for (len = 1 ;(c = br_getc(stream, keep+len)) != '"'; ++len) {
+		if (c == EOF)
+			return --len;
+		if (c == '\\')
+			br_getc(stream, ++len);
+	}
+	return ++len;
+}
+
+void build_jstring(BufferedReader *stream, String *s)
+{
+	size_t len = keep_jstring(stream, 0);
 	update_string(s, br_strptr(stream, len), len);
 }
 
@@ -174,17 +212,17 @@ JsonType set_next_key(Scanner *scanner, int c)
 	if (os_in_object(stack)) {
 		switch(c) {
 		case ',':
-			c = eatwhitespace(stream);
+			c = eat_while(isspace, stream, ' ');
 			if (c != '"')
 				return json_malformed;
-			set_jstring(key, stream);
-			while (isspace(c = getc_keep(stream, key)));
+			build_jstring(stream, key);
+			while (isspace(c = getc_for_string(stream, key)));
 			if (c != ':')
 				return json_malformed;
 			return json_object;
 		case '}':
 			os_pop(stack);
-			c = eatwhitespace(stream);
+			c = eat_while(isspace, stream, ' ');
 			return set_next_key(scanner, c);
 		case EOF:
 			return check_eof(stack);
@@ -199,7 +237,7 @@ JsonType set_next_key(Scanner *scanner, int c)
 			return json_array;
 		case ']':
 			os_pop(stack);
-			c = eatwhitespace(scanner->stream);
+			c = eat_while(isspace, stream, ' ');
 			return set_next_key(scanner, c);
 		case EOF:
 			return check_eof(stack);
@@ -209,25 +247,13 @@ JsonType set_next_key(Scanner *scanner, int c)
 	}
 }
 
-JsonType eat_string(Scanner *scanner)
-{
-	int c;
-	while ((c = br_getc(scanner->stream, 0)) != '"') {
-		if (c == EOF)
-			return json_malformed;
-		if (c == '\\')
-			br_getc(scanner->stream, 0);
-	}
-	return json_string;
-}
-
 // enter_object and enter_array assume the next in the scanner will be
 // an object or an array respectively. From there, you can iterate over
 // keys/indices inside that object to see if there is anything
 // interesting, either passing or reading (or entering).
 JsonType enter_object(Scanner *scanner)
 {
-	int c = eatwhitespace(scanner->stream);
+	int c = eat_while(isspace, scanner->stream, ' ');
 	if (c == '}')
 		return set_next_key(scanner, c);
 	if (c != '"')
@@ -247,21 +273,19 @@ JsonType enter_array(Scanner *scanner)
 // sets the the key for the next item in the array or object you're in.
 JsonType pass_string(Scanner *scanner)
 {
-	JsonType t = eat_string(scanner);
+	JsonType t = eat_jstring(scanner->stream);
 	if (t == json_malformed)
 		return t;
 	int c;
-	c = eatwhitespace(scanner->stream);
+	c = eat_while(isspace, scanner->stream, ' ');
 	return set_next_key(scanner, c);
 }
 
 JsonType pass_number(Scanner *scanner)
 {
-	int c;
-	while (!isspace(c = br_getc(scanner->stream, 0))
-	       && charclasses[c] != j_follower && c != EOF
-	       );
-	c = eatifspace(scanner->stream, c);
+	int c = '0';
+	c = eat_while(in_num, scanner->stream, c);
+	c = eat_while(isspace, scanner->stream, c);
 	return set_next_key(scanner, c);
 }
 
@@ -274,7 +298,7 @@ JsonType pass_object_inner(Scanner *scanner, int stopchar)
 	while ((c = br_getc(scanner->stream, 0)) != stopchar) {
 		switch (c) {
 		case '"':
-			eat_string(scanner);
+			eat_jstring(scanner->stream);
 			break;
 		case '{':
 			pass_object(scanner);
@@ -286,7 +310,7 @@ JsonType pass_object_inner(Scanner *scanner, int stopchar)
 			return json_malformed;
 		}
 	}
-	c = eatwhitespace(scanner->stream);
+	c = eat_while(isspace, scanner->stream, ' ');
 	return set_next_key(scanner, c);
 }
 	
@@ -302,13 +326,9 @@ JsonType pass_array(Scanner *scanner)
 
 JsonType pass_null(Scanner *scanner)
 {
-	if (br_getc(scanner->stream, 0) != 'u')
-		return json_malformed;
-	for (size_t i = 0; i < 2; ++i)
-		if (br_getc(scanner->stream, 0) != 'l') {
-			return json_malformed;
-		}
-	return set_next_key(scanner, eatwhitespace(scanner->stream));
+	for (size_t i = 0; i < 3; ++i)
+		br_getc(scanner->stream, 0);
+	return set_next_key(scanner, eat_while(isspace, scanner->stream, ' '));
 }
 
 ssize_t tell_index(Scanner *scanner)
@@ -326,7 +346,7 @@ PassFunc passfuncs[266] = {
 
 JsonType pass_next(Scanner *scanner)
 {
-	int c = eatwhitespace(scanner->stream);
+	int c = eat_while(isspace, scanner->stream, ' ');
 	if (c == EOF)
 		return check_eof(scanner->stack);
 	PassFunc pass_func = passfuncs[c];
@@ -347,12 +367,12 @@ String *read_next(Scanner *scanner, String *s)
 	ObjStack *stack = scanner->stack;
 	BufferedReader *stream = scanner->stream;
 	size_t stack_base = stack->len;
-	int c = eatwhitespace(stream);
+	int c = eat_while(isspace, stream, ' ');
 	size_t len = 1;
 	do {
 		switch (c) {
 		case '"':
-			len += add_jstring_to_buffer(stream, len);
+			len += keep_jstring(stream, len);
 			break;
 		case '{':
 			os_push(stack, -1);
